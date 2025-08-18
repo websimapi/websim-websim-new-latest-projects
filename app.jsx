@@ -322,7 +322,7 @@ function LoadingSkeleton() {
     columnNumber: 9
   }, this);
 }
-function StatsPanel({ stats, isLoading }) {
+function StatsPanel({ stats, isLoading, discoveryStats }) {
   if (isLoading) return null;
   return /* @__PURE__ */ jsxDEV("div", { className: "glass-effect rounded-xl p-6 mb-8 animate-slide-up", children: [
     /* @__PURE__ */ jsxDEV("h2", { className: "text-2xl font-bold mb-4 text-center", children: "\u{1F4CA} Leaderboard Stats" }, void 0, false, {
@@ -330,7 +330,7 @@ function StatsPanel({ stats, isLoading }) {
       lineNumber: 166,
       columnNumber: 13
     }, this),
-    /* @__PURE__ */ jsxDEV("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-4", children: [
+    /* @__PURE__ */ jsxDEV("div", { className: "grid grid-cols-2 md:grid-cols-4 gap-4 mb-4", children: [
       /* @__PURE__ */ jsxDEV("div", { className: "text-center", children: [
         /* @__PURE__ */ jsxDEV("div", { className: "text-3xl font-bold text-blue-400", children: stats.totalProjects }, void 0, false, {
           fileName: "<stdin>",
@@ -402,6 +402,37 @@ function StatsPanel({ stats, isLoading }) {
       fileName: "<stdin>",
       lineNumber: 167,
       columnNumber: 13
+    }, this),
+    discoveryStats && discoveryStats.isDiscovering && /* @__PURE__ */ jsxDEV("div", { className: "bg-gray-800 rounded-lg p-3 text-center", children: [
+      /* @__PURE__ */ jsxDEV("div", { className: "flex items-center justify-center gap-2 mb-2", children: [
+        /* @__PURE__ */ jsxDEV("div", { className: "w-2 h-2 bg-green-400 rounded-full animate-pulse" }, void 0, false, {
+          fileName: "<stdin>",
+          lineNumber: 192,
+          columnNumber: 25
+        }, this),
+        /* @__PURE__ */ jsxDEV("span", { className: "text-sm font-medium text-green-400", children: "Continuously discovering new projects..." }, void 0, false, {
+          fileName: "<stdin>",
+          lineNumber: 193,
+          columnNumber: 25
+        }, this)
+      ] }, void 0, true, {
+        fileName: "<stdin>",
+        lineNumber: 191,
+        columnNumber: 21
+      }, this),
+      /* @__PURE__ */ jsxDEV("div", { className: "text-xs text-gray-400", children: [
+        "Found ",
+        discoveryStats.totalSessionDiscovered,
+        " new projects this session"
+      ] }, void 0, true, {
+        fileName: "<stdin>",
+        lineNumber: 195,
+        columnNumber: 21
+      }, this)
+    ] }, void 0, true, {
+      fileName: "<stdin>",
+      lineNumber: 190,
+      columnNumber: 17
     }, this)
   ] }, void 0, true, {
     fileName: "<stdin>",
@@ -417,6 +448,7 @@ function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [filters, setFilters] = useState({});
   const [lastRefresh, setLastRefresh] = useState(null);
+  const [discoveryActive, setDiscoveryActive] = useState(true);
   const filteredProjects = useMemo(() => {
     let filtered = projects;
     if (searchQuery) {
@@ -429,9 +461,10 @@ function App() {
   }, [projects, searchQuery]);
   const stats = useMemo(() => leaderboard.getStats(), [projects]);
   useEffect(() => {
-    loadProjects();
-    const interval = setInterval(loadProjects, 5 * 60 * 1e3);
-    return () => clearInterval(interval);
+    initializeApp();
+    return () => {
+      leaderboard.stopContinuousDiscovery();
+    };
   }, []);
   useEffect(() => {
     if (projects.length > 0) {
@@ -439,22 +472,38 @@ function App() {
       setProjects(sorted);
     }
   }, [sortBy, filters]);
-  const loadProjects = async () => {
+  const initializeApp = async () => {
     try {
       setLoading(true);
       setError(null);
-      const response = await websimAPI.getRecentProjects(100);
+      await loadInitialProjects();
+      if (discoveryActive) {
+        leaderboard.startContinuousDiscovery(websimAPI);
+      }
+      const refreshInterval = setInterval(() => {
+        const sortedProjects = leaderboard.getSortedProjects(sortBy, null, filters);
+        setProjects(sortedProjects);
+        setLastRefresh(/* @__PURE__ */ new Date());
+      }, 3e4);
+      return () => clearInterval(refreshInterval);
+    } catch (err) {
+      setError(err.message);
+      console.error("Failed to initialize app:", err);
+    }
+  };
+  const loadInitialProjects = async () => {
+    try {
+      const response = await websimAPI.getRecentProjects(50);
       if (response.feed && response.feed.data) {
         const projectsMetadata = response.feed.data.map((item) => websimAPI.extractProjectMetadata(item)).filter((project) => project.title && project.creator);
         leaderboard.indexProjects(projectsMetadata);
         const sortedProjects = leaderboard.getSortedProjects(sortBy);
         setProjects(sortedProjects);
         setLastRefresh(/* @__PURE__ */ new Date());
-        console.log(`Loaded ${sortedProjects.length} projects`);
+        console.log(`Initial load: ${sortedProjects.length} projects`);
       }
     } catch (err) {
-      setError(err.message);
-      console.error("Failed to load projects:", err);
+      console.warn("Failed to load initial projects:", err);
     } finally {
       setLoading(false);
       const loadingScreen = document.getElementById("loading-screen");
@@ -466,23 +515,33 @@ function App() {
   };
   const handleRefresh = () => {
     websimAPI.clearCache();
-    loadProjects();
+    const sortedProjects = leaderboard.getSortedProjects(sortBy, null, filters);
+    setProjects(sortedProjects);
+    setLastRefresh(/* @__PURE__ */ new Date());
+  };
+  const toggleDiscovery = () => {
+    if (discoveryActive) {
+      leaderboard.stopContinuousDiscovery();
+    } else {
+      leaderboard.startContinuousDiscovery(websimAPI);
+    }
+    setDiscoveryActive(!discoveryActive);
   };
   if (error) {
     return /* @__PURE__ */ jsxDEV("div", { className: "min-h-screen flex items-center justify-center", children: /* @__PURE__ */ jsxDEV("div", { className: "text-center", children: [
       /* @__PURE__ */ jsxDEV("div", { className: "text-6xl mb-4", children: "\u26A0\uFE0F" }, void 0, false, {
         fileName: "<stdin>",
-        lineNumber: 278,
+        lineNumber: 323,
         columnNumber: 21
       }, this),
       /* @__PURE__ */ jsxDEV("h2", { className: "text-2xl font-bold mb-2", children: "Failed to Load Projects" }, void 0, false, {
         fileName: "<stdin>",
-        lineNumber: 279,
+        lineNumber: 324,
         columnNumber: 21
       }, this),
       /* @__PURE__ */ jsxDEV("p", { className: "text-gray-400 mb-4", children: error }, void 0, false, {
         fileName: "<stdin>",
-        lineNumber: 280,
+        lineNumber: 325,
         columnNumber: 21
       }, this),
       /* @__PURE__ */ jsxDEV(
@@ -496,18 +555,18 @@ function App() {
         false,
         {
           fileName: "<stdin>",
-          lineNumber: 281,
+          lineNumber: 326,
           columnNumber: 21
         },
         this
       )
     ] }, void 0, true, {
       fileName: "<stdin>",
-      lineNumber: 277,
+      lineNumber: 322,
       columnNumber: 17
     }, this) }, void 0, false, {
       fileName: "<stdin>",
-      lineNumber: 276,
+      lineNumber: 321,
       columnNumber: 13
     }, this);
   }
@@ -516,10 +575,33 @@ function App() {
       /* @__PURE__ */ jsxDEV("div", { className: "flex items-center justify-between mb-4", children: [
         /* @__PURE__ */ jsxDEV("h1", { className: "text-4xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent", children: "\u{1F680} Websim New" }, void 0, false, {
           fileName: "<stdin>",
-          lineNumber: 298,
+          lineNumber: 343,
           columnNumber: 25
         }, this),
         /* @__PURE__ */ jsxDEV("div", { className: "flex items-center gap-4", children: [
+          /* @__PURE__ */ jsxDEV(
+            "button",
+            {
+              onClick: toggleDiscovery,
+              className: `px-4 py-2 rounded-lg transition-colors flex items-center gap-2 ${discoveryActive ? "bg-green-600 hover:bg-green-700" : "bg-gray-600 hover:bg-gray-700"}`,
+              children: [
+                /* @__PURE__ */ jsxDEV("div", { className: `w-2 h-2 rounded-full ${discoveryActive ? "bg-white animate-pulse" : "bg-gray-400"}` }, void 0, false, {
+                  fileName: "<stdin>",
+                  lineNumber: 355,
+                  columnNumber: 33
+                }, this),
+                discoveryActive ? "Discovery On" : "Discovery Off"
+              ]
+            },
+            void 0,
+            true,
+            {
+              fileName: "<stdin>",
+              lineNumber: 347,
+              columnNumber: 29
+            },
+            this
+          ),
           /* @__PURE__ */ jsxDEV(
             "button",
             {
@@ -529,7 +611,7 @@ function App() {
               children: [
                 /* @__PURE__ */ jsxDEV("span", { className: loading ? "animate-spin" : "", children: "\u{1F504}" }, void 0, false, {
                   fileName: "<stdin>",
-                  lineNumber: 307,
+                  lineNumber: 365,
                   columnNumber: 33
                 }, this),
                 "Refresh"
@@ -539,7 +621,7 @@ function App() {
             true,
             {
               fileName: "<stdin>",
-              lineNumber: 302,
+              lineNumber: 360,
               columnNumber: 29
             },
             this
@@ -549,17 +631,17 @@ function App() {
             lastRefresh.toLocaleTimeString()
           ] }, void 0, true, {
             fileName: "<stdin>",
-            lineNumber: 311,
+            lineNumber: 369,
             columnNumber: 33
           }, this)
         ] }, void 0, true, {
           fileName: "<stdin>",
-          lineNumber: 301,
+          lineNumber: 346,
           columnNumber: 25
         }, this)
       ] }, void 0, true, {
         fileName: "<stdin>",
-        lineNumber: 297,
+        lineNumber: 342,
         columnNumber: 21
       }, this),
       /* @__PURE__ */ jsxDEV("div", { className: "flex flex-col md:flex-row gap-4", children: [
@@ -576,13 +658,13 @@ function App() {
           false,
           {
             fileName: "<stdin>",
-            lineNumber: 321,
+            lineNumber: 379,
             columnNumber: 29
           },
           this
         ) }, void 0, false, {
           fileName: "<stdin>",
-          lineNumber: 320,
+          lineNumber: 378,
           columnNumber: 25
         }, this),
         /* @__PURE__ */ jsxDEV("div", { className: "flex flex-wrap gap-2", children: SORT_OPTIONS.map((option) => /* @__PURE__ */ jsxDEV(
@@ -593,7 +675,7 @@ function App() {
             children: [
               /* @__PURE__ */ jsxDEV("span", { className: "mr-2", children: option.icon }, void 0, false, {
                 fileName: "<stdin>",
-                lineNumber: 342,
+                lineNumber: 400,
                 columnNumber: 37
               }, this),
               option.label
@@ -603,38 +685,38 @@ function App() {
           true,
           {
             fileName: "<stdin>",
-            lineNumber: 333,
+            lineNumber: 391,
             columnNumber: 33
           },
           this
         )) }, void 0, false, {
           fileName: "<stdin>",
-          lineNumber: 331,
+          lineNumber: 389,
           columnNumber: 25
         }, this)
       ] }, void 0, true, {
         fileName: "<stdin>",
-        lineNumber: 319,
+        lineNumber: 377,
         columnNumber: 21
       }, this)
     ] }, void 0, true, {
       fileName: "<stdin>",
-      lineNumber: 296,
+      lineNumber: 341,
       columnNumber: 17
     }, this) }, void 0, false, {
       fileName: "<stdin>",
-      lineNumber: 295,
+      lineNumber: 340,
       columnNumber: 13
     }, this),
     /* @__PURE__ */ jsxDEV("main", { className: "max-w-7xl mx-auto px-4 py-8", children: [
-      /* @__PURE__ */ jsxDEV(StatsPanel, { stats, isLoading: loading }, void 0, false, {
+      /* @__PURE__ */ jsxDEV(StatsPanel, { stats, isLoading: loading, discoveryStats: stats.discovery }, void 0, false, {
         fileName: "<stdin>",
-        lineNumber: 352,
+        lineNumber: 410,
         columnNumber: 17
       }, this),
       loading ? /* @__PURE__ */ jsxDEV(LoadingSkeleton, {}, void 0, false, {
         fileName: "<stdin>",
-        lineNumber: 355,
+        lineNumber: 413,
         columnNumber: 21
       }, this) : /* @__PURE__ */ jsxDEV(Fragment, { children: [
         /* @__PURE__ */ jsxDEV("div", { className: "mb-6 text-center", children: /* @__PURE__ */ jsxDEV("h2", { className: "text-2xl font-semibold text-gray-300", children: [
@@ -643,32 +725,32 @@ function App() {
           searchQuery && ` for "${searchQuery}"`
         ] }, void 0, true, {
           fileName: "<stdin>",
-          lineNumber: 359,
+          lineNumber: 417,
           columnNumber: 29
         }, this) }, void 0, false, {
           fileName: "<stdin>",
-          lineNumber: 358,
+          lineNumber: 416,
           columnNumber: 25
         }, this),
         filteredProjects.length === 0 ? /* @__PURE__ */ jsxDEV("div", { className: "text-center py-16", children: [
           /* @__PURE__ */ jsxDEV("div", { className: "text-6xl mb-4", children: "\u{1F50D}" }, void 0, false, {
             fileName: "<stdin>",
-            lineNumber: 367,
+            lineNumber: 425,
             columnNumber: 33
           }, this),
           /* @__PURE__ */ jsxDEV("h3", { className: "text-2xl font-bold mb-2", children: "No projects found" }, void 0, false, {
             fileName: "<stdin>",
-            lineNumber: 368,
+            lineNumber: 426,
             columnNumber: 33
           }, this),
           /* @__PURE__ */ jsxDEV("p", { className: "text-gray-400", children: "Try adjusting your search or filters" }, void 0, false, {
             fileName: "<stdin>",
-            lineNumber: 369,
+            lineNumber: 427,
             columnNumber: 33
           }, this)
         ] }, void 0, true, {
           fileName: "<stdin>",
-          lineNumber: 366,
+          lineNumber: 424,
           columnNumber: 29
         }, this) : /* @__PURE__ */ jsxDEV("div", { className: "grid-container", children: filteredProjects.map((project, index) => /* @__PURE__ */ jsxDEV(
           ProjectCard,
@@ -680,34 +762,34 @@ function App() {
           false,
           {
             fileName: "<stdin>",
-            lineNumber: 374,
+            lineNumber: 432,
             columnNumber: 37
           },
           this
         )) }, void 0, false, {
           fileName: "<stdin>",
-          lineNumber: 372,
+          lineNumber: 430,
           columnNumber: 29
         }, this)
       ] }, void 0, true, {
         fileName: "<stdin>",
-        lineNumber: 357,
+        lineNumber: 415,
         columnNumber: 21
       }, this)
     ] }, void 0, true, {
       fileName: "<stdin>",
-      lineNumber: 351,
+      lineNumber: 409,
       columnNumber: 13
     }, this)
   ] }, void 0, true, {
     fileName: "<stdin>",
-    lineNumber: 293,
+    lineNumber: 338,
     columnNumber: 9
   }, this);
 }
 const root = createRoot(document.getElementById("root"));
 root.render(/* @__PURE__ */ jsxDEV(App, {}, void 0, false, {
   fileName: "<stdin>",
-  lineNumber: 391,
+  lineNumber: 449,
   columnNumber: 13
 }));

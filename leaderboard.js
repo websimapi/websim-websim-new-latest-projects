@@ -4,6 +4,12 @@ export class ProjectLeaderboard {
         this.sortedProjects = [];
         this.lastUpdated = null;
         this.storageKey = 'websim_project_leaderboard';
+        this.discoveryStats = {
+            isDiscovering: false,
+            discoveryStarted: null,
+            totalSessionDiscovered: 0,
+            sessionsDiscovered: 0
+        };
         this.loadFromStorage();
     }
 
@@ -147,7 +153,8 @@ export class ProjectLeaderboard {
             lastUpdated: this.lastUpdated,
             recentlyIndexed: projects.filter(p => 
                 now - new Date(p.indexedAt) < 60 * 60 * 1000 // within 1 hour
-            ).length
+            ).length,
+            discovery: this.getDiscoveryStats()
         };
     }
 
@@ -274,7 +281,55 @@ export class ProjectLeaderboard {
         this.sortedProjects = [];
         this.lastUpdated = null;
     }
+
+    // Start continuous discovery
+    startContinuousDiscovery(websimAPI) {
+        if (this.discoveryStats.isDiscovering) return;
+        
+        this.discoveryStats.isDiscovering = true;
+        this.discoveryStats.discoveryStarted = new Date();
+        this.discoveryStats.sessionsDiscovered = 0;
+        
+        console.log('Starting continuous project discovery...');
+        
+        const discoveryLoop = async () => {
+            if (!this.discoveryStats.isDiscovering) return;
+            
+            try {
+                const newProjects = await websimAPI.discoverProjectsContinuous();
+                if (newProjects.length > 0) {
+                    const indexed = this.indexProjects(newProjects);
+                    this.discoveryStats.totalSessionDiscovered += indexed;
+                    this.discoveryStats.sessionsDiscovered++;
+                }
+                
+                // Continue discovery with random interval between 3-8 seconds
+                const nextDelay = 3000 + Math.random() * 5000;
+                setTimeout(discoveryLoop, nextDelay);
+            } catch (error) {
+                console.warn('Discovery loop error:', error);
+                // Retry with longer delay on error
+                setTimeout(discoveryLoop, 10000);
+            }
+        };
+        
+        // Start with a small delay
+        setTimeout(discoveryLoop, 1000);
+    }
+
+    stopContinuousDiscovery() {
+        this.discoveryStats.isDiscovering = false;
+        console.log('Stopped continuous project discovery');
+    }
+
+    getDiscoveryStats() {
+        return {
+            ...this.discoveryStats,
+            totalProjects: this.projects.size,
+            discoveryDuration: this.discoveryStats.discoveryStarted ? 
+                Date.now() - this.discoveryStats.discoveryStarted : 0
+        };
+    }
 }
 
 export const leaderboard = new ProjectLeaderboard();
-

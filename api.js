@@ -3,6 +3,15 @@ export class WebsimAPI {
         this.baseURL = '/api/v1';
         this.cache = new Map();
         this.cacheTimeout = 5 * 60 * 1000; // 5 minutes
+        this.discoveryState = {
+            trendingOffset: 0,
+            searchTerms: ['game', 'app', 'tool', 'dashboard', 'portfolio', 'animation', 'interactive', 'visualization', 'calculator', 'generator'],
+            currentSearchIndex: 0,
+            lastDiscoveryTime: 0,
+            rateLimitDelay: 2000, // 2 seconds between requests
+            discoveredProjectIds: new Set(),
+            totalDiscovered: 0
+        };
     }
 
     async fetchWithCache(url, options = {}) {
@@ -124,7 +133,129 @@ export class WebsimAPI {
     clearCache() {
         this.cache.clear();
     }
+
+    // Continuous discovery methods
+    async discoverProjectsContinuous() {
+        const now = Date.now();
+        if (now - this.discoveryState.lastDiscoveryTime < this.discoveryState.rateLimitDelay) {
+            return []; // Rate limiting
+        }
+
+        this.discoveryState.lastDiscoveryTime = now;
+
+        try {
+            // Alternate between different discovery methods
+            const discoveryMethod = this.chooseDiccoveryMethod();
+            const projects = await this.executeDiscoveryMethod(discoveryMethod);
+            
+            // Filter out already discovered projects
+            const newProjects = projects.filter(p => !this.discoveryState.discoveredProjectIds.has(p.id));
+            
+            // Track discovered projects
+            newProjects.forEach(p => this.discoveryState.discoveredProjectIds.add(p.id));
+            this.discoveryState.totalDiscovered += newProjects.length;
+            
+            console.log(`Discovered ${newProjects.length} new projects (${this.discoveryState.totalDiscovered} total)`);
+            return newProjects;
+        } catch (error) {
+            console.warn('Discovery failed:', error);
+            // Increase delay on error
+            this.discoveryState.rateLimitDelay = Math.min(this.discoveryState.rateLimitDelay * 1.5, 10000);
+            return [];
+        }
+    }
+
+    chooseDiccoveryMethod() {
+        const methods = ['trending', 'search', 'latest', 'following'];
+        return methods[Math.floor(Math.random() * methods.length)];
+    }
+
+    async executeDiscoveryMethod(method) {
+        switch (method) {
+            case 'trending':
+                return this.discoverFromTrending();
+            case 'search':
+                return this.discoverFromSearch();
+            case 'latest':
+                return this.discoverFromLatest();
+            case 'following':
+                return this.discoverFromFollowing();
+            default:
+                return this.discoverFromTrending();
+        }
+    }
+
+    async discoverFromTrending() {
+        const response = await this.getRecentProjects(20, this.discoveryState.trendingOffset);
+        this.discoveryState.trendingOffset += 20;
+        
+        // Reset offset occasionally to get fresh trending projects
+        if (this.discoveryState.trendingOffset > 500) {
+            this.discoveryState.trendingOffset = 0;
+        }
+        
+        return this.extractProjectsFromResponse(response);
+    }
+
+    async discoverFromSearch() {
+        const searchTerm = this.discoveryState.searchTerms[this.discoveryState.currentSearchIndex];
+        this.discoveryState.currentSearchIndex = 
+            (this.discoveryState.currentSearchIndex + 1) % this.discoveryState.searchTerms.length;
+        
+        const response = await this.searchProjects(searchTerm, 15);
+        return this.extractProjectsFromResponse(response);
+    }
+
+    async discoverFromLatest() {
+        const url = `${this.baseURL}/feed/trending?limit=15&feed=newest&range=week`;
+        const response = await this.fetchWithCache(url);
+        return this.extractProjectsFromResponse(response);
+    }
+
+    async discoverFromFollowing() {
+        try {
+            const url = `${this.baseURL}/feed/posts?sort=latest&limit=10`;
+            const response = await this.fetchWithCache(url);
+            if (response.data) {
+                return response.data.map(item => this.extractProjectMetadata(item.comment))
+                    .filter(p => p && p.id);
+            }
+        } catch (error) {
+            console.warn('Following discovery failed:', error);
+        }
+        return [];
+    }
+
+    extractProjectsFromResponse(response) {
+        if (response.feed && response.feed.data) {
+            return response.feed.data
+                .map(item => this.extractProjectMetadata(item))
+                .filter(project => project && project.title && project.creator);
+        }
+        return [];
+    }
+
+    getDiscoveryStats() {
+        return {
+            totalDiscovered: this.discoveryState.totalDiscovered,
+            uniqueProjects: this.discoveryState.discoveredProjectIds.size,
+            currentOffset: this.discoveryState.trendingOffset,
+            rateLimitDelay: this.discoveryState.rateLimitDelay,
+            lastDiscoveryTime: this.discoveryState.lastDiscoveryTime
+        };
+    }
+
+    resetDiscoveryState() {
+        this.discoveryState = {
+            trendingOffset: 0,
+            searchTerms: this.discoveryState.searchTerms,
+            currentSearchIndex: 0,
+            lastDiscoveryTime: 0,
+            rateLimitDelay: 2000,
+            discoveredProjectIds: new Set(),
+            totalDiscovered: 0
+        };
+    }
 }
 
 export const websimAPI = new WebsimAPI();
-
